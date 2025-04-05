@@ -1,0 +1,127 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { useAuth } from '@/contexts/AuthContext';
+import { AlertTriangle, ArrowLeft, Wrench, Heart, Anchor, User, Waves, Sailboat, Mountain } from 'lucide-react';
+import type { SOSRequest } from '@/types';
+
+const SOS_TYPES = [
+  { id: 'engine_failure', label: 'Avaria motore', icon: Wrench },
+  { id: 'medical_emergency', label: 'Emergenza medica', icon: Heart },
+  { id: 'adrift', label: 'Alla deriva', icon: Anchor },
+  { id: 'man_overboard', label: 'Uomo in mare', icon: User },
+  { id: 'sinking', label: 'Affondamento', icon: Waves },
+  { id: 'dismasted', label: 'Disalberato', icon: Sailboat },
+  { id: 'aground', label: 'Incagliato', icon: Mountain }
+] as const;
+
+export default function SOSPage() {
+  const [loading, setLoading] = useState(false);
+  const [details, setDetails] = useState('');
+  const { currentUser, userData } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSOS = async (type: SOSRequest['type']) => {
+    if (!currentUser || !userData || !userData.location) {
+      alert('Impossibile inviare SOS: Posizione non disponibile');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const sosData = {
+        userId: currentUser.uid,
+        boatName: userData.boatName,
+        type,
+        location: userData.location,
+        status: 'active',
+        createdAt: serverTimestamp(),
+        phone: userData.phone,
+        details: details.trim() || null,
+        skipperName: userData.isSkipper ? `${userData.skipperFirstName} ${userData.skipperLastName}` : null,
+        boatType: userData.boatType
+      };
+
+      await addDoc(collection(db, 'sos_requests'), sosData);
+      navigate('/');
+    } catch (error) {
+      console.error('Error sending SOS:', error);
+      alert('Errore nell\'invio della richiesta SOS');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-red-600 text-white">
+        <div className="max-w-4xl mx-auto px-4 py-4">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate('/')}
+              className="p-2 hover:bg-red-700 rounded-full transition-colors"
+              aria-label="Torna alla dashboard"
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-8 h-8" />
+              <h1 className="text-2xl font-bold">Richiesta di Soccorso</h1>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        {/* Warning Message */}
+        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <AlertTriangle className="h-5 w-5 text-yellow-400" />
+            </div>
+            <div className="ml-3">
+              <p className="text-sm text-yellow-700">
+                <span className="font-bold">Attenzione!</span> Usa questi pulsanti solo in caso di reale emergenza.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Emergency Type Selection */}
+        <div className="space-y-4">
+          <h2 className="text-lg font-medium text-gray-900">Seleziona il tipo di emergenza:</h2>
+          <div className="grid gap-4">
+            {SOS_TYPES.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => handleSOS(id)}
+                disabled={loading}
+                className="flex items-center gap-3 w-full p-4 text-left text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Icon className="w-6 h-6" />
+                <span className="font-medium">{label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Additional Details */}
+          <div className="mt-6">
+            <label htmlFor="details" className="block text-sm font-medium text-gray-700">
+              Dettagli aggiuntivi (opzionale):
+            </label>
+            <textarea
+              id="details"
+              rows={4}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500"
+              placeholder="Inserisci eventuali dettagli aggiuntivi sulla situazione di emergenza"
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
