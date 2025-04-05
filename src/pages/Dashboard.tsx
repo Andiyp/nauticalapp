@@ -5,7 +5,7 @@ import { collection, onSnapshot, query, orderBy, doc, updateDoc } from 'firebase
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogOut, AlertTriangle, Bell, Phone, Ship, User, MessageSquare, Shield, Menu } from 'lucide-react';
+import { LogOut, AlertTriangle, Bell, Phone, Ship, User, MessageSquare, Shield, Menu, Anchor } from 'lucide-react';
 import SOSButton from '@/components/SOSButton';
 import type { User as UserType, Alert, SOSRequest } from '@/types';
 import 'leaflet/dist/leaflet.css';
@@ -29,14 +29,29 @@ const motorboatIcon = new Icon({
   shadowSize: [41, 41]
 });
 
+const nauticalBaseIcon = new Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+  iconSize: [35, 57], // Larger size to make it more prominent
+  iconAnchor: [17, 57],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
+
+// Nautical base coordinates
+const NAUTICAL_BASE = {
+  lat: 44.488327,
+  lng: 12.291278
+};
+
 export default function Dashboard() {
   const { currentUser, userData, logout } = useAuth();
   const navigate = useNavigate();
   const [users, setUsers] = useState<UserType[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [sosRequests, setSOSRequests] = useState<SOSRequest[]>([]);
-  const [mapCenter, setMapCenter] = useState<[number, number]>([41.9028, 12.4964]); // Default center (Rome)
-  const [mapZoom] = useState(10);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([NAUTICAL_BASE.lat, NAUTICAL_BASE.lng]); // Default center on nautical base
+  const [mapZoom] = useState(13); // Increased zoom level to better show the area
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isGeolocationEnabled, setIsGeolocationEnabled] = useState(false);
@@ -99,9 +114,9 @@ export default function Dashboard() {
                 setIsGeolocationEnabled(false);
               },
               {
-                enableHighAccuracy: false, // Changed to false to allow faster, less accurate positions
+                enableHighAccuracy: false,
                 maximumAge: 30000,
-                timeout: 60000 // Increased to 60 seconds
+                timeout: 60000
               }
             );
 
@@ -365,6 +380,24 @@ export default function Dashboard() {
                       maxZoom={20}
                       subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
                     />
+                    {/* Nautical Base Marker */}
+                    <Marker
+                      position={[NAUTICAL_BASE.lat, NAUTICAL_BASE.lng]}
+                      icon={nauticalBaseIcon}
+                    >
+                      <Popup>
+                        <div className="p-2">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Anchor className="w-5 h-5 text-red-600" />
+                            <h3 className="font-semibold text-lg">Base Nautica</h3>
+                          </div>
+                          <p className="text-sm text-gray-600">
+                            Coordinate: {NAUTICAL_BASE.lat.toFixed(6)}°N, {NAUTICAL_BASE.lng.toFixed(6)}°E
+                          </p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                    {/* User Markers */}
                     {users.map((user) => (
                       user.location && (
                         <Marker
