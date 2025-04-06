@@ -37,10 +37,15 @@ export interface SOSRequest {
     lat: number;
     lng: number;
   };
-  status: 'active' | 'resolved';
+  status: 'active' | 'accepted' | 'resolved';
   createdAt: Date;
   phone: string;
   details?: string | null;
   skipperName?: string | null;
   boatType: BoatType;
+  acceptedBy?: {
+    uid: string;
+    boatName: string;
+    acceptedAt: Date;
+  } | null;
 }

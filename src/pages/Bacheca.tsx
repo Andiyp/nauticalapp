@@ -1,15 +1,17 @@
 import React from 'react';
-import { collection, query, orderBy, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, Timestamp, doc, updateDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { db } from '@/lib/firebase';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Bell, ArrowLeft, Phone, Ship } from 'lucide-react';
+import { AlertTriangle, Bell, ArrowLeft, Phone, Ship, Clock, CheckCircle2, UserCheck } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 import type { Alert, SOSRequest } from '@/types';
 
 export default function Bacheca() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [sosRequests, setSOSRequests] = useState<SOSRequest[]>([]);
   const navigate = useNavigate();
+  const { currentUser, userData } = useAuth();
 
   useEffect(() => {
     // Subscribe to alerts collection
@@ -43,10 +45,18 @@ export default function Bacheca() {
           data.createdAt.toDate() : 
           new Date(data.createdAt);
 
+        const acceptedAt = data.acceptedBy?.acceptedAt instanceof Timestamp ?
+          data.acceptedBy.acceptedAt.toDate() :
+          data.acceptedBy?.acceptedAt ? new Date(data.acceptedBy.acceptedAt) : null;
+
         sosData.push({ 
           id: doc.id, 
           ...data,
-          createdAt 
+          createdAt,
+          acceptedBy: data.acceptedBy ? {
+            ...data.acceptedBy,
+            acceptedAt: acceptedAt || new Date()
+          } : null
         } as SOSRequest);
       });
       setSOSRequests(sosData);
@@ -95,6 +105,41 @@ export default function Bacheca() {
       aground: 'bg-orange-100 text-orange-800 border-orange-200'
     };
     return colors[type] || 'bg-gray-100 text-gray-800 border-gray-200';
+  };
+
+  const handleAcceptSOS = async (sosRequest: SOSRequest) => {
+    if (!currentUser || !userData) return;
+
+    try {
+      const sosRef = doc(db, 'sos_requests', sosRequest.id);
+      await updateDoc(sosRef, {
+        status: 'accepted',
+        acceptedBy: {
+          uid: currentUser.uid,
+          boatName: userData.boatName,
+          acceptedAt: new Date()
+        }
+      });
+    } catch (error) {
+      console.error('Error accepting SOS request:', error);
+      alert('Errore nell\'accettare la richiesta SOS');
+    }
+  };
+
+  const handleDeleteSOS = async (sosId: string) => {
+    if (!userData?.role === 'admin') return;
+
+    if (!confirm('Sei sicuro di voler eliminare questa richiesta SOS?')) return;
+
+    try {
+      const sosRef = doc(db, 'sos_requests', sosId);
+      await updateDoc(sosRef, {
+        status: 'resolved'
+      });
+    } catch (error) {
+      console.error('Error deleting SOS request:', error);
+      alert('Errore nell\'eliminare la richiesta SOS');
+    }
   };
 
   // Combine and sort all items by date
@@ -153,7 +198,10 @@ export default function Bacheca() {
                   <div className="space-y-2">
                     <div className="flex justify-between items-start">
                       <span className="font-medium">{getSOSTypeLabel(item.data.type)}</span>
-                      <span className="text-sm opacity-75">{formatDate(item.date)}</span>
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <Clock className="w-4 h-4" />
+                        <span>{formatDate(item.date)}</span>
+                      </div>
                     </div>
                     <p className="text-lg font-semibold">Imbarcazione: {item.data.boatName}</p>
                     <p>Posizione: Lat: {item.data.location.lat.toFixed(6)}, Long: {item.data.location.lng.toFixed(6)}</p>
@@ -171,14 +219,55 @@ export default function Bacheca() {
                         {item.data.details}
                       </p>
                     )}
-                    <div className="mt-2">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        item.data.status === 'active' 
-                          ? 'bg-red-100 text-red-800' 
-                          : 'bg-green-100 text-green-800'
-                      }`}>
-                        {item.data.status === 'active' ? 'In corso' : 'Risolto'}
-                      </span>
+                    <div className="mt-4 space-y-4">
+                      {/* Status Badge */}
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          item.data.status === 'active' 
+                            ? 'bg-red-100 text-red-800'
+                            : item.data.status === 'accepted'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-green-100 text-green-800'
+                        }`}>
+                          {item.data.status === 'active' ? 'In corso' : 
+                           item.data.status === 'accepted' ? 'Accettato' : 'Risolto'}
+                        </span>
+                      </div>
+
+                      {/* Accepted By Info */}
+                      {item.data.acceptedBy && (
+                        <div className="flex items-center gap-2 text-sm text-gray-600 bg-white/50 p-3 rounded-md">
+                          <UserCheck className="w-4 h-4" />
+                          <span>
+                            Accettato da: <strong>{item.data.acceptedBy.boatName}</strong>
+                            <br />
+                            il {formatDate(item.data.acceptedBy.acceptedAt)}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2">
+                        {item.data.status === 'active' && currentUser && userData && 
+                         item.data.userId !== currentUser.uid && (
+                          <button
+                            onClick={() => handleAcceptSOS(item.data)}
+                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            Accetta Richiesta
+                          </button>
+                        )}
+                        {userData?.role === 'admin' && item.data.status !== 'resolved' && (
+                          <button
+                            onClick={() => handleDeleteSOS(item.data.id)}
+                            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                          >
+                            <AlertTriangle className="w-4 h-4" />
+                            Segna come Risolto
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
