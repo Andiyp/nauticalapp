@@ -14,6 +14,8 @@ export interface User {
   phone: string;
   role: UserRole;
   isBlocked: boolean;
+  isOnline: boolean;
+  lastSeen: Date;
   location?: {
     lat: number;
     lng: number;

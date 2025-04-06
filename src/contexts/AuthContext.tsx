@@ -8,7 +8,7 @@ import {
   setPersistence,
   browserLocalPersistence
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import type { User } from '@/types';
 
@@ -16,7 +16,7 @@ interface AuthContextType {
   currentUser: FirebaseUser | null;
   userData: User | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, userData: Omit<User, 'uid' | 'role' | 'isBlocked'>) => Promise<void>;
+  register: (email: string, password: string, userData: Omit<User, 'uid' | 'role' | 'isBlocked' | 'isOnline' | 'lastSeen'>) => Promise<void>;
   logout: () => Promise<void>;
   loading: boolean;
 }
@@ -43,6 +43,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const docRef = doc(db, 'users', user.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
+          // Update online status when user is authenticated
+          await updateDoc(docRef, {
+            isOnline: true,
+            lastSeen: serverTimestamp()
+          });
           setUserData(docSnap.data() as User);
         }
       } else {
@@ -54,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, []);
 
-  async function register(email: string, password: string, userData: Omit<User, 'uid' | 'role' | 'isBlocked'>) {
+  async function register(email: string, password: string, userData: Omit<User, 'uid' | 'role' | 'isBlocked' | 'isOnline' | 'lastSeen'>) {
     // Set persistence to LOCAL to maintain the session
     await setPersistence(auth, browserLocalPersistence);
     const { user } = await createUserWithEmailAndPassword(auth, email, password);
@@ -63,16 +68,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       uid: user.uid,
       role: 'user',
       isBlocked: false,
+      isOnline: true,
+      lastSeen: serverTimestamp()
     });
   }
 
   async function login(email: string, password: string) {
     // Set persistence to LOCAL to maintain the session
     await setPersistence(auth, browserLocalPersistence);
-    await signInWithEmailAndPassword(auth, email, password);
+    const { user } = await signInWithEmailAndPassword(auth, email, password);
+    // Update online status on login
+    const userRef = doc(db, 'users', user.uid);
+    await updateDoc(userRef, {
+      isOnline: true,
+      lastSeen: serverTimestamp()
+    });
   }
 
-  function logout() {
+  async function logout() {
+    if (currentUser) {
+      // Update online status before signing out
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
+        isOnline: false,
+        lastSeen: serverTimestamp()
+      });
+    }
     return signOut(auth);
   }
 
