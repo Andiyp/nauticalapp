@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Ship } from 'lucide-react';
@@ -8,22 +8,42 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, currentUser, userData } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // If user is already logged in and has user data, redirect to home
+    if (currentUser && userData && !userData.isBlocked) {
+      navigate('/', { replace: true });
+    }
+  }, [currentUser, userData, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     try {
       setError('');
       setLoading(true);
       await login(email, password);
-      navigate('/');
+      // After successful login, the useEffect above will handle the redirection
     } catch (err) {
-      setError('Failed to log in');
-    } finally {
+      console.error('Login error:', err);
+      setError('Credenziali non valide. Riprova.');
       setLoading(false);
     }
   };
+
+  // If we're already processing login, show loading
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-blue-50 to-blue-100">
+        <div className="text-center">
+          <Ship className="h-12 w-12 text-blue-600 animate-pulse mx-auto" />
+          <p className="mt-4 text-gray-600">Accesso in corso...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-blue-50 to-blue-100 py-12 px-4 sm:px-6 lg:px-8">

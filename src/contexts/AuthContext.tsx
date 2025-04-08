@@ -36,6 +36,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userData, setUserData] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Handle user status updates
+  const updateUserStatus = async (uid: string, isOnline: boolean) => {
+    try {
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, {
+        isOnline,
+        lastSeen: serverTimestamp()
+      });
+    } catch (error) {
+      console.error('Error updating user status:', error);
+    }
+  };
+
+  // Handle page visibility changes
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (currentUser) {
+        updateUserStatus(currentUser.uid, !document.hidden);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', () => {
+      if (currentUser) {
+        updateUserStatus(currentUser.uid, false);
+      }
+    });
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', () => {});
+    };
+  }, [currentUser]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -43,7 +77,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const docRef = doc(db, 'users', user.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          // Update online status when user is authenticated
           await updateDoc(docRef, {
             isOnline: true,
             lastSeen: serverTimestamp()
@@ -60,7 +93,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function register(email: string, password: string, userData: Omit<User, 'uid' | 'role' | 'isBlocked' | 'isOnline' | 'lastSeen'>) {
-    // Set persistence to LOCAL to maintain the session
     await setPersistence(auth, browserLocalPersistence);
     const { user } = await createUserWithEmailAndPassword(auth, email, password);
     await setDoc(doc(db, 'users', user.uid), {
@@ -74,10 +106,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function login(email: string, password: string) {
-    // Set persistence to LOCAL to maintain the session
     await setPersistence(auth, browserLocalPersistence);
     const { user } = await signInWithEmailAndPassword(auth, email, password);
-    // Update online status on login
     const userRef = doc(db, 'users', user.uid);
     await updateDoc(userRef, {
       isOnline: true,
@@ -87,14 +117,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function logout() {
     if (currentUser) {
-      // Update online status before signing out
-      const userRef = doc(db, 'users', currentUser.uid);
-      await updateDoc(userRef, {
-        isOnline: false,
-        lastSeen: serverTimestamp()
-      });
+      try {
+        await updateUserStatus(currentUser.uid, false);
+        await signOut(auth);
+      } catch (error) {
+        console.error('Error during logout:', error);
+        throw error;
+      }
     }
-    return signOut(auth);
   }
 
   const value = {

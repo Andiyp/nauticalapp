@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import { Icon } from 'leaflet';
-import { collection, onSnapshot, query, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, updateDoc, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
@@ -32,7 +32,7 @@ const motorboatIcon = new Icon({
 const nauticalBaseIcon = new Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-  iconSize: [35, 57], // Larger size to make it more prominent
+  iconSize: [35, 57],
   iconAnchor: [17, 57],
   popupAnchor: [1, -34],
   shadowSize: [41, 41]
@@ -50,8 +50,8 @@ export default function Dashboard() {
   const [users, setUsers] = useState<UserType[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [sosRequests, setSOSRequests] = useState<SOSRequest[]>([]);
-  const [mapCenter, setMapCenter] = useState<[number, number]>([NAUTICAL_BASE.lat, NAUTICAL_BASE.lng]); // Default center on nautical base
-  const [mapZoom] = useState(13); // Increased zoom level to better show the area
+  const [mapCenter, setMapCenter] = useState<[number, number]>([NAUTICAL_BASE.lat, NAUTICAL_BASE.lng]);
+  const [mapZoom] = useState(13);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isGeolocationEnabled, setIsGeolocationEnabled] = useState(false);
@@ -60,10 +60,24 @@ export default function Dashboard() {
   useEffect(() => {
     if (!currentUser) return;
 
+    // Subscribe to online users only
+    const unsubUsers = onSnapshot(
+      query(collection(db, 'users'), where('isOnline', '==', true)),
+      (snapshot) => {
+        const usersData: UserType[] = [];
+        snapshot.forEach((doc) => {
+          const userData = doc.data() as UserType;
+          if (userData.location) {
+            usersData.push(userData);
+          }
+        });
+        setUsers(usersData);
+      }
+    );
+
     // Request geolocation permission and start tracking
     const requestGeolocation = async () => {
       try {
-        // First check if geolocation is supported
         if (!navigator.geolocation) {
           setGeolocationError('Il tuo browser non supporta la geolocalizzazione.');
           setIsGeolocationEnabled(false);
@@ -79,8 +93,8 @@ export default function Dashboard() {
         }
 
         if (permission.state === 'granted' || permission.state === 'prompt') {
-          try {
-            const watchId = navigator.geolocation.watchPosition(
+          const startWatchingPosition = (useHighAccuracy = false) => {
+            return navigator.geolocation.watchPosition(
               async (position) => {
                 setIsGeolocationEnabled(true);
                 setGeolocationError(null);
@@ -89,7 +103,6 @@ export default function Dashboard() {
                   lng: position.coords.longitude
                 };
                 
-                // Update user's location in Firestore
                 if (currentUser) {
                   const userRef = doc(db, 'users', currentUser.uid);
                   await updateDoc(userRef, { location: newLocation });
@@ -110,34 +123,37 @@ export default function Dashboard() {
                     break;
                 }
                 console.error('Geolocation error:', error);
+                
+                if (useHighAccuracy) {
+                  console.log('Retrying with lower accuracy...');
+                  return startWatchingPosition(false);
+                }
+                
                 setGeolocationError(errorMessage);
                 setIsGeolocationEnabled(false);
               },
               {
-                enableHighAccuracy: false,
+                enableHighAccuracy: useHighAccuracy,
                 maximumAge: 30000,
                 timeout: 60000
               }
             );
+          };
 
-            // Listen for permission changes
-            permission.addEventListener('change', () => {
-              if (permission.state === 'denied') {
-                setGeolocationError('L\'accesso alla posizione è stato negato. Per favore, abilita la geolocalizzazione nelle impostazioni del browser.');
-                setIsGeolocationEnabled(false);
-                navigator.geolocation.clearWatch(watchId);
-              }
-            });
+          const watchId = startWatchingPosition(true);
 
-            return () => {
+          permission.addEventListener('change', () => {
+            if (permission.state === 'denied') {
+              setGeolocationError('L\'accesso alla posizione è stato negato. Per favore, abilita la geolocalizzazione nelle impostazioni del browser.');
+              setIsGeolocationEnabled(false);
               navigator.geolocation.clearWatch(watchId);
-              permission.removeEventListener('change', () => {});
-            };
-          } catch (watchError) {
-            console.error('Error watching position:', watchError);
-            setGeolocationError('Si è verificato un errore durante il monitoraggio della posizione. Verifica la tua connessione e il segnale GPS.');
-            setIsGeolocationEnabled(false);
-          }
+            }
+          });
+
+          return () => {
+            navigator.geolocation.clearWatch(watchId);
+            permission.removeEventListener('change', () => {});
+          };
         }
       } catch (error) {
         console.error('Error requesting geolocation:', error);
@@ -147,18 +163,6 @@ export default function Dashboard() {
     };
 
     requestGeolocation();
-
-    // Subscribe to users collection
-    const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      const usersData: UserType[] = [];
-      snapshot.forEach((doc) => {
-        const userData = doc.data() as UserType;
-        if (userData.location) {
-          usersData.push(userData);
-        }
-      });
-      setUsers(usersData);
-    });
 
     // Subscribe to alerts collection
     const alertsQuery = query(collection(db, 'alerts'), orderBy('createdAt', 'desc'));
@@ -189,10 +193,31 @@ export default function Dashboard() {
 
   const handleLogout = async () => {
     try {
+      setShowMobileMenu(false);
+      setShowProfileMenu(false);
       await logout();
-      navigate('/login');
+      navigate('/login', { replace: true });
     } catch (error) {
       console.error('Failed to log out:', error);
+    }
+  };
+
+  const handleAcceptSOS = async (sosRequest: SOSRequest) => {
+    if (!currentUser || !userData) return;
+
+    try {
+      const sosRef = doc(db, 'sos_requests', sosRequest.id);
+      await updateDoc(sosRef, {
+        status: 'accepted',
+        acceptedBy: {
+          uid: currentUser.uid,
+          boatName: userData.boatName,
+          acceptedAt: new Date()
+        }
+      });
+    } catch (error) {
+      console.error('Error accepting SOS request:', error);
+      alert('Errore nell\'accettare la richiesta SOS');
     }
   };
 
@@ -266,6 +291,7 @@ export default function Dashboard() {
                     <Link
                       to="/profile"
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      onClick={() => setShowProfileMenu(false)}
                     >
                       Gestione Profilo
                     </Link>
@@ -273,6 +299,7 @@ export default function Dashboard() {
                       <Link
                         to="/admin"
                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        onClick={() => setShowProfileMenu(false)}
                       >
                         Pannello Admin
                       </Link>
@@ -307,12 +334,14 @@ export default function Dashboard() {
               <Link
                 to="/"
                 className="block px-3 py-2 rounded-md text-base font-medium text-white bg-blue-700"
+                onClick={() => setShowMobileMenu(false)}
               >
                 Dashboard
               </Link>
               <Link
                 to="/bacheca"
                 className="block px-3 py-2 rounded-md text-base font-medium text-white hover:bg-blue-700"
+                onClick={() => setShowMobileMenu(false)}
               >
                 Bacheca
               </Link>
@@ -320,6 +349,7 @@ export default function Dashboard() {
                 <Link
                   to="/admin"
                   className="block px-3 py-2 rounded-md text-base font-medium text-white hover:bg-blue-700"
+                  onClick={() => setShowMobileMenu(false)}
                 >
                   Admin Panel
                 </Link>
@@ -327,6 +357,7 @@ export default function Dashboard() {
               <Link
                 to="/profile"
                 className="block px-3 py-2 rounded-md text-base font-medium text-white hover:bg-blue-700"
+                onClick={() => setShowMobileMenu(false)}
               >
                 Profilo
               </Link>
@@ -452,6 +483,15 @@ export default function Dashboard() {
                             <a href={`tel:${sos.phone}`} className="hover:underline">{sos.phone}</a>
                           </div>
                         </div>
+                        {currentUser && userData && sos.userId !== currentUser.uid && (
+                          <button
+                            onClick={() => handleAcceptSOS(sos)}
+                            className="mt-4 flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                          >
+                            <Ship className="w-4 h-4" />
+                            Accetta Richiesta
+                          </button>
+                        )}
                       </div>
                     ))}
                     {sosRequests.filter(sos => sos.status === 'active').length === 0 && (

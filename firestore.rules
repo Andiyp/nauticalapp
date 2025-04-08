@@ -7,43 +7,54 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    function isAdmin() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    // Optimized user document access - caches the user doc
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
     
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    function isNotBlocked() {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBlocked == false;
+    // Batch user checks to reduce reads
+    function getUserStatus() {
+      let userData = getUserData();
+      return {
+        'isAdmin': userData.role == 'admin',
+        'isBlocked': userData.isBlocked
+      };
     }
 
     // Users collection
     match /users/{userId} {
-      allow read: if isAuthenticated() && isNotBlocked();
-      allow create: if isAuthenticated() && isOwner(userId);
-      allow update: if isAdmin() || (isOwner(userId) && isNotBlocked());
-      allow delete: if isAdmin();
+      // Optimize read operations by combining conditions
+      allow read: if isAuthenticated() && (
+        userId == request.auth.uid || 
+        getUserData().role == 'admin'
+      );
+      
+      allow create: if isAuthenticated() && userId == request.auth.uid;
+      
+      // Combine update conditions to reduce reads
+      allow update: if isAuthenticated() && (
+        userId == request.auth.uid && !getUserData().isBlocked ||
+        getUserData().role == 'admin'
+      );
+      
+      allow delete: if isAuthenticated() && getUserData().role == 'admin';
     }
 
-    // SOS requests
+    // SOS requests - optimize by reducing nested checks
     match /sos_requests/{requestId} {
-      allow read: if isAuthenticated() && isNotBlocked();
-      allow create: if isAuthenticated() && isNotBlocked() && 
+      allow read: if isAuthenticated() && !getUserData().isBlocked;
+      
+      allow create: if isAuthenticated() && 
+        !getUserData().isBlocked && 
         request.resource.data.userId == request.auth.uid;
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      
+      allow update, delete: if isAuthenticated() && getUserData().role == 'admin';
     }
 
-    // Alerts collection (admin announcements)
+    // Alerts collection - simplified rules
     match /alerts/{alertId} {
-      allow read: if isAuthenticated() && isNotBlocked();
-      allow write: if isAdmin();
+      allow read: if isAuthenticated() && !getUserData().isBlocked;
+      allow write: if isAuthenticated() && getUserData().role == 'admin';
     }
   }
 }
